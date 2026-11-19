@@ -1,83 +1,114 @@
+require('dotenv').config();
 const express = require('express');
 const mongoose = require('mongoose');
-const Usuario = require('./models/usuarios');
-const Produto = require('./models/produto');
-const Pedido = require('./models/Pedido');
 
 const app = express();
 app.use(express.json());
 
 // Conexão com o MongoDB
-mongoose.connect('mongodb://localhost:27017/marketplace')
-  .then(() => console.log('Conectado ao MongoDB!'))
-  .catch(err => console.error('Erro ao conectar ao MongoDB:', err));
+mongoose.connect(process.env.MONGO_URI)
+  .then(() => console.log('Conectado ao MongoDB com sucesso!'))
+  .catch((err) => console.error('Erro ao conectar ao MongoDB:', err));
 
+// --- MODELOS (SCHEMAS) ---
+
+const UsuarioSchema = new mongoose.Schema({
+  nome: { type: String, required: true },
+  tipo: { type: String, enum: ['vendedor', 'comprador'], required: true }
+});
+const Usuario = mongoose.model('Usuario', UsuarioSchema);
+
+const ProdutoSchema = new mongoose.Schema({
+  vendedorId: { type: mongoose.Schema.Types.ObjectId, ref: 'Usuario', required: true },
+  nome: { type: String, required: true },
+  preco: { type: Number, required: true },
+  estoque: { type: Number, required: true }
+});
+const Produto = mongoose.model('Produto', ProdutoSchema);
+
+const PedidoSchema = new mongoose.Schema({
+  compradorId: { type: mongoose.Schema.Types.ObjectId, ref: 'Usuario', required: true },
+  produtoId: { type: mongoose.Schema.Types.ObjectId, ref: 'Produto', required: true },
+  quantidade: { type: Number, required: true },
+  valorTotal: { type: Number, required: true },
+  data: { type: Date, default: Date.now }
+});
+const Pedido = mongoose.model('Pedido', PedidoSchema);
+
+// --- ROTAS ---
+
+// 1. Cadastrar Usuário
 app.post('/usuarios', async (req, res) => {
   try {
-    const {nome, tipo} = req.body;
+    const { nome, tipo } = req.body;
     const novoUsuario = await Usuario.create({ nome, tipo });
     res.status(201).json(novoUsuario);
-  } catch (err) {
-    res.status(400).json({ error: 'Erro ao cadastrar usuário.' , detalhes: err.message});
-
-         }
- });
-
-app.post('/produtos', async (req, res) => {
-    try {
-        const { nome, preco, estoque, vendedorId } = req.body;
-        const vendedor = await Usuario.findById(vendedorId);
-        if (!vendedor || vendedor.tipo !== 'vendedor') {
-            return res.status(400).json({ error: 'ID do vendedor inválido ou usuário não é um vendedor.' });
-        }
-        const novoProduto = await Produto.create({ nome, preco, estoque, vendedorId });
-        res.status(201).json(novoProduto);
-    } catch (err) {
-        res.status(400).json({ error: 'Erro ao cadastrar produto.', detalhes: err.message });
-    }   
-})
-
-app.get('/produtos', async (req, res) => {
-    try {
-        const produtosDisponiveis = await Produto.find({ estoque: { $gt: 0 } });
-        res.json(produtosDisponiveis);
-    } catch (err) {
-        res.status(500).json({ error: 'Erro ao buscar produtos.', detalhes: err.message });
-    }
+  } catch (error) {
+    res.status(400).json({ erro: 'Dados inválidos para cadastro.', detalhes: error.message });
+  }
 });
 
+// 2. Anunciar Produto (Apenas Vendedores)
+app.post('/produtos', async (req, res) => {
+  try {
+    const { vendedorId, nome, preco, estoque } = req.body;
+    const vendedor = await Usuario.findOne({ _id: vendedorId, tipo: 'vendedor' });
 
+    if (!vendedor) {
+      return res.status(403).json({ erro: 'Vendedor não encontrado ou sem permissão.' });
+    }
+
+    const novoProduto = await Produto.create({ vendedorId, nome, preco, estoque });
+    res.status(201).json(novoProduto);
+  } catch (error) {
+    res.status(400).json({ erro: 'Erro ao cadastrar produto.', detalhes: error.message });
+  }
+});
+
+// 3. Listar Vitrine (Trazendo dados do vendedor com populate)
+app.get('/produtos', async (req, res) => {
+  try {
+    const disponiveis = await Produto.find({ estoque: { $gt: 0 } })
+      .populate('vendedorId', 'nome'); // Mostra o nome da loja em vez de apenas o ID
+    res.json(disponiveis);
+  } catch (error) {
+    res.status(500).json({ erro: 'Erro ao buscar produtos.' });
+  }
+});
+
+// 4. Realizar Compra (Apenas Compradores)
 app.post('/pedidos', async (req, res) => {
   try {
     const { compradorId, produtoId, quantidade } = req.body;
-    const comprador = await Usuario.findById(compradorId);
-    if (!comprador || comprador.tipo !== 'comprador') {
-      return res.status(400).json({ error: 'ID do comprador inválido ou usuário não é um comprador.' });
+
+    const comprador = await Usuario.findOne({ _id: compradorId, tipo: 'comprador' });
+    if (!comprador) {
+      return res.status(403).json({ erro: 'Comprador inválido.' });
     }
+
     const produto = await Produto.findById(produtoId);
-    if (!produto) {
-      return res.status(400).json({ error: 'ID do produto inválido.' });
-    }
-    if (produto.estoque < quantidade) {
-      return res.status(400).json({ error: 'Quantidade solicitada maior que o estoque disponível.' });
+    if (!produto || produto.estoque < quantidade) {
+      return res.status(400).json({ erro: 'Produto indisponível ou estoque insuficiente.' });
     }
 
+    // Atualiza o estoque no banco
     produto.estoque -= quantidade;
-  await produto.save();
-  const valorTotal = produto.preco * quantidade;
-  const novoPedido = await Pedido.create({ compradorId, produtoId, quantidade, valorTotal });
-  res.status(201).json(novoPedido);
+    await produto.save();
 
+    const valorTotal = produto.preco * quantidade;
+    const novoPedido = await Pedido.create({
+      compradorId,
+      produtoId,
+      quantidade,
+      valorTotal
+    });
 
-  } catch (err) {
-    res.status(400).json({ error: 'Erro ao criar pedido.', detalhes: err.message });
- 
-  
-   }
+    res.status(201).json(novoPedido);
+  } catch (error) {
+    res.status(400).json({ erro: 'Erro ao processar pedido.', detalhes: error.message });
+  }
 });
 
-
-// Inicia o servidor na porta 3000
 app.listen(3000, () => {
   console.log('Marketplace rodando em http://localhost:3000');
 });

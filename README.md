@@ -1,114 +1,153 @@
-# Marketplace API - Refatoração para MongoDB & Mongoose
+# Marketplace API — Persistência com Node.js, Express e MongoDB
 
-Este repositório contém a evolução de um sistema de marketplace monolítico construído em **Node.js** e **Express**. O objetivo principal da atividade foi migrar o armazenamento de dados que antes utilizava **arrays em memória** para um banco de dados NoSQL (**MongoDB**), utilizando a biblioteca **Mongoose** para modelagem, validação e relacionamentos.
+Este projeto apresenta a evolução de uma API de marketplace construída em **Node.js** e **Express**, migrando o armazenamento temporário em memória para persistência real em banco de dados NoSQL (**MongoDB / MongoDB Atlas**) com **Mongoose** e gerenciamento seguro de credenciais via **Dotenv**.
 
 ---
 
 ## 🚀 Tecnologias Utilizadas
 
-- **Node.js**: Ambiente de execução JavaScript no servidor.
-- **Express**: Framework web minimalista para Node.js.
-- **MongoDB**: Banco de dados NoSQL orientado a documentos.
-- **Mongoose**: ODM (Object Data Modeling) para modelar os dados e gerenciar as relações no MongoDB.
-- **Nodemon**: Ferramenta de desenvolvimento para reiniciar automaticamente o servidor a cada alteração de código.
+* **Node.js**: Ambiente de execução JavaScript no lado do servidor.
+* **Express**: Framework web para criação das rotas e middlewares da API REST.
+* **MongoDB / MongoDB Atlas**: Banco de dados NoSQL orientado a documentos (local ou em nuvem).
+* **Mongoose**: ODM (Object Data Modeling) para definição de Schemas, validações e relacionamentos (`ObjectId` + `populate`).
+* **Dotenv**: Carregamento de variáveis de ambiente a partir de um arquivo `.env`.
+* **Nodemon**: Reinicialização automática do servidor durante o desenvolvimento.
 
 ---
 
 ## 📂 Estrutura do Projeto
 
-O projeto foi organizado de forma modular, separando os modelos de dados da lógica das rotas do servidor:
-
 ```text
 marketplace-mongo/
-├── models/
-│   ├── Usuario.js   # Schema e Model para Usuários (Compradores e Vendedores)
-│   ├── Produto.js   # Schema e Model para Produtos (Com referência ao Vendedor)
-│   └── Pedido.js    # Schema e Model para Pedidos (Com referências e valor total)
-├── package.json     # Configuração de dependências e scripts
-└── server.js        # Arquivo principal com a conexão e rotas da API
+├── .env             # Variáveis de ambiente (string de conexão MONGO_URI)
+├── package.json     # Dependências e scripts de execução
+└── server.js        # Conexão com MongoDB, Schemas, Models e rotas da API
 ```
+
+> **Nota:** Certifique-se de adicionar `.env` e `node_modules/` ao seu `.gitignore` para não expor credenciais de acesso ao banco no repositório.
 
 ---
 
-## 🛠️ Passo a Passo da Implementação
+## 🛠️ Instalação e Configuração
 
-### 1. Instalação e Configuração
-No terminal, inicializamos o projeto e instalamos as dependências necessárias:
+### 1. Instalar as dependências
+
+No terminal, dentro da pasta do projeto, instale os pacotes necessários:
+
 ```bash
 npm init -y
-npm install express mongoose
+npm install express mongoose dotenv
 npm install -D nodemon
 ```
 
-### 2. Modelagem dos Dados (Mongoose Schemas)
-Criamos os schemas para estruturar os documentos no MongoDB:
-* **Usuário (`models/Usuario.js`)**: Define `nome` (String) e `tipo` (enum: `comprador` ou `vendedor`).
-* **Produto (`models/Produto.js`)**: Define `nome`, `preco`, `estoque` e o `vendedorId` referenciando o modelo de `Usuario` (`ObjectId`).
-* **Pedido (`models/Pedido.js`)**: Registra a compra vinculando o `compradorId`, `produtoId`, a `quantidade`, o `valorTotal` e a `data` padrão (`Date.now`).
+### 2. Configurar o arquivo `.env`
 
-### 3. Conexão com o Banco e Rotas (`server.js`)
-O servidor conecta-se localmente ao MongoDB e disponibiliza as rotas refatoradas:
-* `POST /usuarios`: Cadastra um usuário.
-* `POST /produtos`: Valida se o usuário é um vendedor antes de cadastrar o produto.
-* `GET /produtos`: Lista a vitrine filtrando apenas produtos com estoque disponível (`$gt: 0`).
-* `POST /pedidos`: Valida o comprador, confere o estoque, decrementa o estoque do produto utilizando `.save()`, calcula o total e cria o pedido.
+Na raiz do projeto, crie um arquivo chamado `.env` e defina a variável `MONGO_URI` apontando para o seu MongoDB local ou cluster do MongoDB Atlas:
+
+```env
+# Exemplo para MongoDB Atlas (com o nome do banco 'marketplace' definido na URI)
+MONGO_URI=mongodb+srv://<usuario>:<senha>@cluster0.xxxxx.mongodb.net/marketplace?retryWrites=true&w=majority
+
+# Ou para MongoDB local:
+# MONGO_URI=mongodb://localhost:27017/marketplace
+```
+
+> **Dica:** Caso o nome do banco (`/marketplace`) não seja informado após `.mongodb.net/`, o MongoDB utilizará o banco padrão `test`.
+
+### 3. Configurar o script no `package.json`
+
+Garanta que o script `dev` execute o arquivo principal do servidor:
+
+```json
+"scripts": {
+  "dev": "nodemon server.js"
+}
+```
+
+### 4. Iniciar o servidor
+
+```bash
+npm run dev
+```
+
+Se tudo estiver configurado corretamente, o terminal exibirá:
+`Conectado ao MongoDB com sucesso!`
+`Marketplace rodando em http://localhost:3000`
 
 ---
 
-## 🕹️ Como Executar o Projeto
+## 🧱 Modelagem de Dados (Schemas)
 
-1. Certifique-se de que o seu **MongoDB** local está rodando.
-2. Inicie o servidor em modo de desenvolvimento com o comando:
-   ```bash
-   npm run dev
-   ```
-3. O servidor estará rodando em: `http://localhost:3000`
+* **Usuario (`UsuarioSchema`)**:
+  * `nome` (`String`, obrigatório)
+  * `tipo` (`String`, obrigatório, valores permitidos: `'vendedor'` ou `'comprador'`)
+* **Produto (`ProdutoSchema`)**:
+  * `vendedorId` (`ObjectId`, referência para `'Usuario'`, obrigatório)
+  * `nome` (`String`, obrigatório)
+  * `preco` (`Number`, obrigatório)
+  * `estoque` (`Number`, obrigatório)
+* **Pedido (`PedidoSchema`)**:
+  * `compradorId` (`ObjectId`, referência para `'Usuario'`, obrigatório)
+  * `produtoId` (`ObjectId`, referência para `'Produto'`, obrigatório)
+  * `quantidade` (`Number`, obrigatório)
+  * `valorTotal` (`Number`, obrigatório)
+  * `data` (`Date`, padrão `Date.now`)
 
 ---
 
-## 🧪 Testando as Rotas (Exemplo no Thunder Client / Postman)
+## 🔌 Endpoints da API
 
-Para testar o fluxo completo do marketplace, siga esta ordem:
+| Método | Rota | Descrição |
+| :--- | :--- | :--- |
+| `POST` | `/usuarios` | Cadastra um novo usuário (`vendedor` ou `comprador`). |
+| `POST` | `/produtos` | Anuncia um novo produto (valida se o `vendedorId` pertence a um `vendedor`). |
+| `GET` | `/produtos` | Lista produtos com `estoque > 0` e traz o nome do vendedor via `.populate('vendedorId', 'nome')`. |
+| `POST` | `/pedidos` | Realiza uma compra (valida comprador e estoque, atualiza o estoque no banco e registra o pedido). |
 
-1. **Cadastrar Vendedor** (`POST /usuarios`)
-   ```json
-   {
-     "nome": "Carlos Vendedor",
-     "tipo": "vendedor"
-   }
-   ```
-   *(Copie o `_id` retornado)*
+---
 
-2. **Cadastrar Comprador** (`POST /usuarios`)
-   ```json
-   {
-     "nome": "Ana Compradora",
-     "tipo": "comprador"
-   }
-   ```
-   *(Copie o `_id` retornado)*
+## 🧪 Fluxo de Testes (Thunder Client / Postman)
 
-3. **Anunciar Produto** (`POST /produtos`)
-   *(Cole o `_id` do vendedor no campo `vendedorId`)*
-   ```json
-   {
-     "vendedorId": "ID_DO_VENDEDOR_AQUI",
-     "nome": "Mouse Gamer",
-     "preco": 150.00,
-     "estoque": 10
-   }
-   ```
-   *(Copie o `_id` do produto retornado)*
+Siga a ordem abaixo para testar o ciclo completo e validar a persistência no **MongoDB Atlas** (*Data Explorer → Collections*):
 
-4. **Listar Vitrine** (`GET /produtos`)
-   *Retorna todos os produtos disponíveis (`estoque > 0`).*
+### 1. Cadastrar Vendedor (`POST http://localhost:3000/usuarios`)
+```json
+{
+  "nome": "Loja do Cobra",
+  "tipo": "vendedor"
+}
+```
+*(Guarde o `_id` retornado)*
 
-5. **Realizar Pedido** (`POST /pedidos`)
-   *(Cole os IDs correspondentes do comprador e do produto)*
-   ```json
-   {
-     "compradorId": "ID_DO_COMPRADOR_AQUI",
-     "produtoId": "ID_DO_PRODUTO_AQUI",
-     "quantidade": 2
-   }
-   ```
+### 2. Cadastrar Comprador (`POST http://localhost:3000/usuarios`)
+```json
+{
+  "nome": "Ana Compradora",
+  "tipo": "comprador"
+}
+```
+*(Guarde o `_id` retornado)*
+
+### 3. Anunciar Produto (`POST http://localhost:3000/produtos`)
+```json
+{
+  "vendedorId": "ID_DO_VENDEDOR_AQUI",
+  "nome": "Teclado Mecânico",
+  "preco": 250.00,
+  "estoque": 5
+}
+```
+*(Guarde o `_id` do produto retornado)*
+
+### 4. Listar Vitrine (`GET http://localhost:3000/produtos`)
+Retorna os produtos com estoque disponível e o campo `vendedorId` populado com `_id` e `nome`.
+
+### 5. Realizar Compra (`POST http://localhost:3000/pedidos`)
+```json
+{
+  "compradorId": "ID_DO_COMPRADOR_AQUI",
+  "produtoId": "ID_DO_PRODUTO_AQUI",
+  "quantidade": 2
+}
+```
+*(Ao consultar `GET /produtos` novamente ou inspecionar a coleção `produtos` no Atlas, o estoque estará atualizado para `3`.)*
