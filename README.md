@@ -1,153 +1,201 @@
-# Marketplace API — Persistência com Node.js, Express e MongoDB
+🛒 Marketplace API & Performance Lab
 
-Este projeto apresenta a evolução de uma API de marketplace construída em **Node.js** e **Express**, migrando o armazenamento temporário em memória para persistência real em banco de dados NoSQL (**MongoDB / MongoDB Atlas**) com **Mongoose** e gerenciamento seguro de credenciais via **Dotenv**.
+API RESTful e laboratório de banco de dados de um sistema de marketplace desenvolvido com Node.js, Express e MongoDB (utilizando Mongoose para modelagem da aplicação principal e o driver nativo do MongoDB para geração de carga em massa, agregações, otimização de índices e transações ACID).
 
----
+📋 Funcionalidades Implementadas
 
-## 🚀 Tecnologias Utilizadas
+Usuários (POST /usuarios): Cadastro de compradores e vendedores com validação de papéis (comprador | vendedor).
 
-* **Node.js**: Ambiente de execução JavaScript no lado do servidor.
-* **Express**: Framework web para criação das rotas e middlewares da API REST.
-* **MongoDB / MongoDB Atlas**: Banco de dados NoSQL orientado a documentos (local ou em nuvem).
-* **Mongoose**: ODM (Object Data Modeling) para definição de Schemas, validações e relacionamentos (`ObjectId` + `populate`).
-* **Dotenv**: Carregamento de variáveis de ambiente a partir de um arquivo `.env`.
-* **Nodemon**: Reinicialização automática do servidor durante o desenvolvimento.
+Produtos (POST /produtos e GET /produtos): Criação de produtos vinculados a vendedores e listagem com relacionamento populado (.populate()).
 
----
+Pedidos (POST /pedidos): Criação de pedidos com validação de existência de comprador/produto, checagem de estoque e baixa automática no inventário.
 
-## 📂 Estrutura do Projeto
+Carga de Dados em Massa (seed/seed.js): Script de seeding local para popular o banco marketplace com grandes volumes de documentos (products, users e orders).
 
-```text
-marketplace-mongo/
-├── .env             # Variáveis de ambiente (string de conexão MONGO_URI)
-├── package.json     # Dependências e scripts de execução
-└── server.js        # Conexão com MongoDB, Schemas, Models e rotas da API
-```
+Relatórios Analíticos (GET /relatorios/...): Pipelines do Aggregation Framework executados diretamente no MongoDB para faturamento por categoria e ranking paginado de clientes VIP ($facet).
 
-> **Nota:** Certifique-se de adicionar `.env` e `node_modules/` ao seu `.gitignore` para não expor credenciais de acesso ao banco no repositório.
+Checkout Transacional ACID (checkout.js): Operação atômica multi-documento (client.startSession() + session.withTransaction()) em Replica Set (rs0) validando estoque e saldo em carteira, debitando valores com $inc e garantindo rollback (abortTransaction) em caso de falha.
 
----
+Modelagem e Otimização (SOLUCAO.md): Evolução de schema (evitando Unbounded Arrays e o limite de 16 MB) e diagnóstico de performance com índices compostos (Regra ESR).
 
-## 🛠️ Instalação e Configuração
+🛠️ Tecnologias Utilizadas
 
-### 1. Instalar as dependências
+Node.js & Express
 
-No terminal, dentro da pasta do projeto, instale os pacotes necessários:
+MongoDB (Instância Local configurada como Replica Set rs0)
 
-```bash
-npm init -y
-npm install express mongoose dotenv
-npm install -D nodemon
-```
+Mongoose (ODM da API principal)
 
-### 2. Configurar o arquivo `.env`
+MongoDB Native Driver (Script de Seed em lote, pipelines analíticos e transações ACID)
 
-Na raiz do projeto, crie um arquivo chamado `.env` e defina a variável `MONGO_URI` apontando para o seu MongoDB local ou cluster do MongoDB Atlas:
+Dotenv & Nodemon
 
-```env
-# Exemplo para MongoDB Atlas (com o nome do banco 'marketplace' definido na URI)
-MONGO_URI=mongodb+srv://<usuario>:<senha>@cluster0.xxxxx.mongodb.net/marketplace?retryWrites=true&w=majority
+📂 Estrutura do Projeto
 
-# Ou para MongoDB local:
-# MONGO_URI=mongodb://localhost:27017/marketplace
-```
+├── seed/
+│   ├── package.json
+│   └── seed.js
+├── .env
+├── checkout.js
+├── package.json
+├── server.js
+├── README.md
+└── SOLUCAO.md
 
-> **Dica:** Caso o nome do banco (`/marketplace`) não seja informado após `.mongodb.net/`, o MongoDB utilizará o banco padrão `test`.
 
-### 3. Configurar o script no `package.json`
+🚀 Como Executar o Projeto
 
-Garanta que o script `dev` execute o arquivo principal do servidor:
+1. Pré-requisitos e Replica Set Local (rs0)
 
-```json
-"scripts": {
-  "dev": "nodemon server.js"
-}
-```
+Para executar transações multi-documento (ACID), o MongoDB local deve rodar em modo Replica Set:
 
-### 4. Iniciar o servidor
+# 1. Criar diretório de dados (caso não exista)
+New-Item -ItemType Directory -Path "C:\data\db" -Force
 
-```bash
+# 2. Iniciar o servidor MongoDB com Replica Set rs0
+mongod --replSet rs0 --dbpath "C:\data\db"
+
+
+Em outro terminal, inicialize o Replica Set via mongosh:
+
+mongosh "mongodb://localhost:27017"
+rs.initiate({
+  _id: "rs0",
+  members: [{ _id: 0, host: "localhost:27017" }]
+});
+
+
+2. Configuração da API Principal
+
+Na raiz do projeto, instale as dependências e configure o arquivo .env:
+
+npm install
+
+
+Crie um arquivo .env na raiz com as seguintes variáveis:
+
+PORT=3000
+MONGO_URI=mongodb://localhost:27017/marketplace?replicaSet=rs0
+
+
+Inicie o servidor:
+
 npm run dev
-```
 
-Se tudo estiver configurado corretamente, o terminal exibirá:
-`Conectado ao MongoDB com sucesso!`
-`Marketplace rodando em http://localhost:3000`
 
----
+📊 Carga de Dados em Massa (Seed)
 
-## 🧱 Modelagem de Dados (Schemas)
+Para simular um ambiente de alto volume e avaliar consultas, agregações e transações, utilize o script isolado na pasta seed/:
 
-* **Usuario (`UsuarioSchema`)**:
-  * `nome` (`String`, obrigatório)
-  * `tipo` (`String`, obrigatório, valores permitidos: `'vendedor'` ou `'comprador'`)
-* **Produto (`ProdutoSchema`)**:
-  * `vendedorId` (`ObjectId`, referência para `'Usuario'`, obrigatório)
-  * `nome` (`String`, obrigatório)
-  * `preco` (`Number`, obrigatório)
-  * `estoque` (`Number`, obrigatório)
-* **Pedido (`PedidoSchema`)**:
-  * `compradorId` (`ObjectId`, referência para `'Usuario'`, obrigatório)
-  * `produtoId` (`ObjectId`, referência para `'Produto'`, obrigatório)
-  * `quantidade` (`Number`, obrigatório)
-  * `valorTotal` (`Number`, obrigatório)
-  * `data` (`Date`, padrão `Date.now`)
+Produtos (products): 1.000 documentos
 
----
+Usuários (users): 5.000 documentos (com saldo em carteira walletBalance)
 
-## 🔌 Endpoints da API
+Pedidos (orders): 100.000 documentos (inseridos em lotes de 10.000)
 
-| Método | Rota | Descrição |
-| :--- | :--- | :--- |
-| `POST` | `/usuarios` | Cadastra um novo usuário (`vendedor` ou `comprador`). |
-| `POST` | `/produtos` | Anuncia um novo produto (valida se o `vendedorId` pertence a um `vendedor`). |
-| `GET` | `/produtos` | Lista produtos com `estoque > 0` e traz o nome do vendedor via `.populate('vendedorId', 'nome')`. |
-| `POST` | `/pedidos` | Realiza uma compra (valida comprador e estoque, atualiza o estoque no banco e registra o pedido). |
+cd seed
+npm init -y && npm install mongodb
+node seed.js
 
----
 
-## 🧪 Fluxo de Testes (Thunder Client / Postman)
+Nota: A execução do seed.js limpa o banco marketplace antes de inserir os novos registros.
 
-Siga a ordem abaixo para testar o ciclo completo e validar a persistência no **MongoDB Atlas** (*Data Explorer → Collections*):
+📈 Relatórios com Aggregation Framework
 
-### 1. Cadastrar Vendedor (`POST http://localhost:3000/usuarios`)
-```json
+1. Faturamento por Categoria (Últimos 90 Dias)
+
+GET /relatorios/faturamento-categoria
+
+Filtra pedidos com status PAID, SHIPPED ou DELIVERED realizados nos últimos 90 dias ($match), desmembra items ($unwind), agrupa por categoria ($group) somando faturamento e quantidade vendida, e ordena de forma decrescente ($sort).
+
+2. Ranking de Clientes VIP em São Paulo (Paginado)
+
+GET /relatorios/clientes-vip-sp
+
+Cruza orders com users ($lookup), filtra clientes da cidade de "São Paulo" ($match), agrega total gasto e quantidade de pedidos ($group), e usa $facet para retornar simultaneamente o Top 10 clientes e a contagem total de clientes elegíveis.
+
+⚡ Resumo de Otimização de Performance (Regra ESR)
+
+Para eliminar a lentidão na busca de pedidos por cidade, status e data de criação (db.orders.find({ shippingCity: "São Paulo", status: "DELIVERED", createdAt: { $gte: ... } }).sort({ createdAt: -1 })), foi criado o índice composto seguindo a regra ESR (Equality, Sort, Range):
+
+db.orders.createIndex({ shippingCity: 1, status: 1, createdAt: -1 });
+
+
+Métrica
+
+Antes (COLLSCAN)
+
+Depois (IXSCAN + FETCH)
+
+Melhoria
+
+Tempo (executionTimeMillis)
+
+297 ms
+
+53 ms
+
+~82% mais rápido
+
+Documentos Examinados
+
+100.000
+
+462
+
+-99,54% leituras
+
+Chaves Examinadas
+
+0
+
+462
+
+Busca indexada direta
+
+🔒 Consistência e Transações ACID (checkout.js)
+
+O script checkout.js executa o fluxo atômico de compra (criarPedidoTransacional) garantindo que estoque, saldo em carteira e registro de pedido sejam atualizados em conjunto ou revertidos via abortTransaction:
+
+node checkout.js
+
+
+Valida disponibilidade de estoque (stock >= quantity) em products.
+
+Valida saldo suficiente (walletBalance >= price * quantity) em users.
+
+Debita o estoque ($inc: { stock: -quantity }) e o saldo ($inc: { walletBalance: -totalAmount }).
+
+Registra o novo pedido na coleção orders com status: "PAID".
+
+Os detalhes completos de modelagem, pipelines, planos de execução (.explain("executionStats")) e transações ACID estão documentados em SOLUCAO.md.
+
+🧪 Exemplos de Endpoints CRUD
+
+Criar Usuário (POST /usuarios)
+
 {
-  "nome": "Loja do Cobra",
+  "nome": "João Silva",
   "tipo": "vendedor"
 }
-```
-*(Guarde o `_id` retornado)*
 
-### 2. Cadastrar Comprador (`POST http://localhost:3000/usuarios`)
-```json
-{
-  "nome": "Ana Compradora",
-  "tipo": "comprador"
-}
-```
-*(Guarde o `_id` retornado)*
 
-### 3. Anunciar Produto (`POST http://localhost:3000/produtos`)
-```json
+Criar Produto (POST /produtos)
+
 {
-  "vendedorId": "ID_DO_VENDEDOR_AQUI",
+  "vendedorId": "ID_DO_VENDEDOR",
   "nome": "Teclado Mecânico",
-  "preco": 250.00,
-  "estoque": 5
+  "preco": 350.00,
+  "estoque": 20
 }
-```
-*(Guarde o `_id` do produto retornado)*
 
-### 4. Listar Vitrine (`GET http://localhost:3000/produtos`)
-Retorna os produtos com estoque disponível e o campo `vendedorId` populado com `_id` e `nome`.
 
-### 5. Realizar Compra (`POST http://localhost:3000/pedidos`)
-```json
+Listar Produtos (GET /produtos)
+
+Criar Pedido (POST /pedidos)
+
 {
-  "compradorId": "ID_DO_COMPRADOR_AQUI",
-  "produtoId": "ID_DO_PRODUTO_AQUI",
+  "compradorId": "ID_DO_COMPRADOR",
+  "produtoId": "ID_DO_PRODUTO",
   "quantidade": 2
 }
-```
-*(Ao consultar `GET /produtos` novamente ou inspecionar a coleção `produtos` no Atlas, o estoque estará atualizado para `3`.)*

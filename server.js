@@ -76,6 +76,7 @@ app.get('/produtos', async (req, res) => {
   }
 });
 
+
 // 4. Realizar Compra (Apenas Compradores)
 app.post('/pedidos', async (req, res) => {
   try {
@@ -103,11 +104,87 @@ app.post('/pedidos', async (req, res) => {
       valorTotal
     });
 
+
+
+
+
+
+
     res.status(201).json(novoPedido);
   } catch (error) {
     res.status(400).json({ erro: 'Erro ao processar pedido.', detalhes: error.message });
   }
 });
+
+// 1. Faturamento por categoria (últimos 90 dias, PAID, SHIPPED ou DELIVERED)
+app.get("/relatorios/faturamento-categoria", async (req, res) => {
+  try {
+    const dataLimite = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
+    const resultado = await mongoose.connection.db.collection("orders").aggregate([
+      {
+        $match: {
+          status: { $in: ["PAID", "SHIPPED", "DELIVERED"] },
+          createdAt: { $gte: dataLimite }
+        }
+      },
+      { $unwind: "$items" },
+      {
+        $group: {
+          _id: "$items.category",
+          faturamentoTotal: {
+            $sum: { $multiply: ["$items.quantity", "$items.unitPrice"] }
+          },
+          quantidadeItensVendidos: { $sum: "$items.quantity" }
+        }
+      },
+      { $sort: { faturamentoTotal: -1 } }
+    ]).toArray();
+
+    res.json(resultado);
+  } catch (err) {
+    res.status(500).json({ erro: err.message });
+  }
+});
+
+// 2. Ranking de clientes VIP em São Paulo (paginado com $facet)
+app.get("/relatorios/clientes-vip-sp", async (req, res) => {
+  try {
+    const resultado = await mongoose.connection.db.collection("orders").aggregate([
+      {
+        $lookup: {
+          from: "users",
+          localField: "userId",
+          foreignField: "_id",
+          as: "usuario"
+        }
+      },
+      { $unwind: "$usuario" },
+      { $match: { "usuario.city": "São Paulo" } },
+      {
+        $group: {
+          _id: "$usuario._id",
+          nome: { $first: "$usuario.name" },
+          email: { $first: "$usuario.email" },
+          totalGasto: { $sum: "$totalAmount" },
+          quantidadePedidos: { $sum: 1 }
+        }
+      },
+      { $sort: { totalGasto: -1 } },
+      {
+        $facet: {
+          rankingTop10: [{ $limit: 10 }],
+          totalClientesElegiveis: [{ $count: "total" }]
+        }
+      }
+    ]).toArray();
+
+    res.json(resultado[0]);
+  } catch (err) {
+    res.status(500).json({ erro: err.message });
+  }
+});
+
+
 
 app.listen(3000, () => {
   console.log('Marketplace rodando em http://localhost:3000');
