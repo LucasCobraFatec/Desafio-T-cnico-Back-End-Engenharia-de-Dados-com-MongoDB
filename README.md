@@ -1,37 +1,19 @@
-🛒 Marketplace API & Performance Lab
+# 🛒 Marketplace MongoDB — Modelagem, Agregações, Performance (ESR) e Transações ACID
 
-API RESTful e laboratório de banco de dados de um sistema de marketplace desenvolvido com Node.js, Express e MongoDB (utilizando Mongoose para modelagem da aplicação principal e o driver nativo do MongoDB para geração de carga em massa, agregações, otimização de índices e transações ACID).
+Sistema de marketplace desenvolvido com **Node.js**, **Express** e **MongoDB** (utilizando **Mongoose** para a API principal e o **MongoDB Native Driver** para geração de massa de dados, *pipelines* analíticos, otimização de índices e transações ACID em Replica Set local `rs0`).
 
-📋 Funcionalidades Implementadas
+---
 
-Usuários (POST /usuarios): Cadastro de compradores e vendedores com validação de papéis (comprador | vendedor).
+## 🛠️ Stack Tecnológica e Estrutura do Projeto
 
-Produtos (POST /produtos e GET /produtos): Criação de produtos vinculados a vendedores e listagem com relacionamento populado (.populate()).
+* **Runtime & API:** Node.js & Express
+* **Banco de Dados:** MongoDB (Instância local configurada como Replica Set `rs0` em `C:\data\db`)
+* **Camada de Dados:** Mongoose e MongoDB Native Driver (`client.startSession()` + `session.withTransaction()`)
+* **Ferramentas Auxiliares:** Dotenv & Nodemon
 
-Pedidos (POST /pedidos): Criação de pedidos com validação de existência de comprador/produto, checagem de estoque e baixa automática no inventário.
+### Estrutura de Diretórios
 
-Carga de Dados em Massa (seed/seed.js): Script de seeding local para popular o banco marketplace com grandes volumes de documentos (products, users e orders).
-
-Relatórios Analíticos (GET /relatorios/...): Pipelines do Aggregation Framework executados diretamente no MongoDB para faturamento por categoria e ranking paginado de clientes VIP ($facet).
-
-Checkout Transacional ACID (checkout.js): Operação atômica multi-documento (client.startSession() + session.withTransaction()) em Replica Set (rs0) validando estoque e saldo em carteira, debitando valores com $inc e garantindo rollback (abortTransaction) em caso de falha.
-
-Modelagem e Otimização (SOLUCAO.md): Evolução de schema (evitando Unbounded Arrays e o limite de 16 MB) e diagnóstico de performance com índices compostos (Regra ESR).
-
-🛠️ Tecnologias Utilizadas
-
-Node.js & Express
-
-MongoDB (Instância Local configurada como Replica Set rs0)
-
-Mongoose (ODM da API principal)
-
-MongoDB Native Driver (Script de Seed em lote, pipelines analíticos e transações ACID)
-
-Dotenv & Nodemon
-
-📂 Estrutura do Projeto
-
+```text
 ├── seed/
 │   ├── package.json
 │   └── seed.js
@@ -39,163 +21,318 @@ Dotenv & Nodemon
 ├── checkout.js
 ├── package.json
 ├── server.js
-├── README.md
-└── SOLUCAO.md
+└── README.md
+```
 
+---
 
-🚀 Como Executar o Projeto
+## 🚀 Como Executar Localmente
 
-1. Pré-requisitos e Replica Set Local (rs0)
+### 1. Subir o MongoDB com Replica Set (`rs0`)
 
-Para executar transações multi-documento (ACID), o MongoDB local deve rodar em modo Replica Set:
+Para executar transações multi-documento (ACID), o MongoDB local deve estar rodando como **Replica Set**:
 
-# 1. Criar diretório de dados (caso não exista)
+```powershell
+# 1. Criar diretório de dados (caso ainda não exista)
 New-Item -ItemType Directory -Path "C:\data\db" -Force
 
 # 2. Iniciar o servidor MongoDB com Replica Set rs0
 mongod --replSet rs0 --dbpath "C:\data\db"
+```
 
+Em outro terminal, conecte via `mongosh` e inicialize o Replica Set:
 
-Em outro terminal, inicialize o Replica Set via mongosh:
-
+```javascript
 mongosh "mongodb://localhost:27017"
+
 rs.initiate({
   _id: "rs0",
   members: [{ _id: 0, host: "localhost:27017" }]
 });
+```
 
+### 2. Configurar e Iniciar a API Principal
 
-2. Configuração da API Principal
+Na raiz do projeto, instale as dependências e crie o arquivo `.env`:
 
-Na raiz do projeto, instale as dependências e configure o arquivo .env:
-
+```powershell
 npm install
+```
 
+Conteúdo do `.env`:
 
-Crie um arquivo .env na raiz com as seguintes variáveis:
-
+```env
 PORT=3000
 MONGO_URI=mongodb://localhost:27017/marketplace?replicaSet=rs0
-
+```
 
 Inicie o servidor:
 
+```powershell
 npm run dev
+```
 
+### 3. Popular o Banco com Carga de Dados em Massa (`seed.js`)
 
-📊 Carga de Dados em Massa (Seed)
+O script de *seeding* limpa o banco `marketplace` e insere um volume realista para testes de agregação, performance e transações:
+* **Produtos (`products`):** `1.000` documentos
+* **Usuários (`users`):** `5.000` documentos (com saldo em carteira `walletBalance`)
+* **Pedidos (`orders`):** `100.000` documentos (inseridos em lotes de `10.000`)
 
-Para simular um ambiente de alto volume e avaliar consultas, agregações e transações, utilize o script isolado na pasta seed/:
-
-Produtos (products): 1.000 documentos
-
-Usuários (users): 5.000 documentos (com saldo em carteira walletBalance)
-
-Pedidos (orders): 100.000 documentos (inseridos em lotes de 10.000)
-
+```powershell
 cd seed
-npm init -y && npm install mongodb
+npm install
 node seed.js
+```
 
+---
 
-Nota: A execução do seed.js limpa o banco marketplace antes de inserir os novos registros.
+## 🧩 1. Modelagem e Evolução de Schema (*Embedding* vs. *Referencing*)
 
-📈 Relatórios com Aggregation Framework
+### 1.1. Avaliações de Produtos (`reviews`)
+Para suportar dezenas de milhares de avaliações em produtos populares sem atingir o limite de **16 MB** por documento e mantendo a leitura da vitrine instantânea, foi adotado o padrão híbrido **Subset Pattern + Computed Pattern**:
 
-1. Faturamento por Categoria (Últimos 90 Dias)
+* **Embedding (`products`):** Embute indicadores pré-calculados (`ratingSummary.averageRating` e `ratingSummary.totalReviews`) e um subconjunto restrito às **10 avaliações mais recentes** (`recentReviews`), limitadas na escrita com `$slice: -10`.
+* **Referencing (`reviews`):** Coleção dedicada para armazenar o histórico completo e ilimitado de avaliações, referenciando `productId` e `userId`.
 
-GET /relatorios/faturamento-categoria
+#### Exemplo JSON — Coleção `products`
+```json
+{
+  "_id": ObjectId("6b036975f9052fe402081b3c"),
+  "sku": "SKU-00001",
+  "name": "Produto Exemplo 1",
+  "category": "Esportes",
+  "price": 96.9,
+  "stock": 120,
+  "sellerId": "SELLER-12",
+  "active": true,
+  "ratingSummary": {
+    "averageRating": 4.8,
+    "totalReviews": 15420
+  },
+  "recentReviews": [
+    {
+      "reviewId": ObjectId("6b036999f9052fe402081a01"),
+      "authorName": "Cliente 42",
+      "rating": 5,
+      "comment": "Excelente qualidade e entrega rápida!",
+      "createdAt": ISODate("2026-11-22T14:30:00Z")
+    }
+  ]
+}
+```
 
-Filtra pedidos com status PAID, SHIPPED ou DELIVERED realizados nos últimos 90 dias ($match), desmembra items ($unwind), agrupa por categoria ($group) somando faturamento e quantidade vendida, e ordena de forma decrescente ($sort).
+#### Exemplo JSON — Coleção `reviews`
+```json
+{
+  "_id": ObjectId("6b036999f9052fe402081a01"),
+  "productId": ObjectId("6b036975f9052fe402081b3c"),
+  "userId": ObjectId("6b036975f9052fe402081f24"),
+  "authorName": "Cliente 42",
+  "rating": 5,
+  "comment": "Excelente qualidade e entrega rápida!",
+  "createdAt": ISODate("2026-11-22T14:30:00Z")
+}
+```
 
-2. Ranking de Clientes VIP em São Paulo (Paginado)
+### 1.2. Logs de Auditoria de Pedidos (`statusHistory`)
+Para registrar as transições de estado do pedido (`PENDING` $\rightarrow$ `PAID` $\rightarrow$ `SHIPPED` $\rightarrow$ `DELIVERED`), utilizamos **Embedding** com o array limitado (`statusHistory`) dentro do próprio documento de `orders`:
 
-GET /relatorios/clientes-vip-sp
+* **Bounded Array:** Um pedido possui poucas mudanças de estado ao longo de seu ciclo de vida.
+* **Coesão e Leitura Atômica:** A trilha de auditoria é recuperada na mesma consulta do pedido, dispensando `$lookup`.
 
-Cruza orders com users ($lookup), filtra clientes da cidade de "São Paulo" ($match), agrega total gasto e quantidade de pedidos ($group), e usa $facet para retornar simultaneamente o Top 10 clientes e a contagem total de clientes elegíveis.
+#### Exemplo JSON — Coleção `orders`
+```json
+{
+  "_id": ObjectId("6b03698fcbc74fec5c52a5d8"),
+  "userId": ObjectId("6b036975f9052fe402081f24"),
+  "shippingCity": "Recife",
+  "status": "DELIVERED",
+  "items": [
+    {
+      "productId": ObjectId("6b036975f9052fe402081b3c"),
+      "sku": "SKU-00001",
+      "category": "Esportes",
+      "unitPrice": 96.9,
+      "quantity": 1
+    }
+  ],
+  "totalAmount": 96.9,
+  "createdAt": ISODate("2026-11-22T22:15:43.047Z"),
+  "statusHistory": [
+    {
+      "status": "PENDING",
+      "changedAt": ISODate("2026-11-22T22:15:40.000Z"),
+      "changedBy": ObjectId("6b036975f9052fe402081f24")
+    },
+    {
+      "status": "PAID",
+      "changedAt": ISODate("2026-11-22T22:15:43.047Z"),
+      "changedBy": ObjectId("6b036975f9052fe402081f24")
+    },
+    {
+      "status": "SHIPPED",
+      "changedAt": ISODate("2026-11-23T09:10:00.000Z"),
+      "changedBy": ObjectId("6b036975f9052fe402081001")
+    },
+    {
+      "status": "DELIVERED",
+      "changedAt": ISODate("2026-11-25T16:40:00.000Z"),
+      "changedBy": ObjectId("6b036975f9052fe402081002")
+    }
+  ]
+}
+```
 
-⚡ Resumo de Otimização de Performance (Regra ESR)
+---
 
-Para eliminar a lentidão na busca de pedidos por cidade, status e data de criação (db.orders.find({ shippingCity: "São Paulo", status: "DELIVERED", createdAt: { $gte: ... } }).sort({ createdAt: -1 })), foi criado o índice composto seguindo a regra ESR (Equality, Sort, Range):
+## 📈 2. Aggregation Framework
 
-db.orders.createIndex({ shippingCity: 1, status: 1, createdAt: -1 });
+### 2.1. Relatório de Faturamento por Categoria (Últimos 90 Dias)
+Filtra pedidos pagos/enviados/entregues nos últimos 90 dias (`$match`), desmembra `items` (`$unwind`), agrupa por categoria (`$group`) somando faturamento (`quantity * unitPrice`) e volume de itens, ordenando do maior para o menor (`$sort`):
 
+```javascript
+const dataLimite = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
 
-Métrica
+db.orders.aggregate([
+  {
+    $match: {
+      status: { $in: ["PAID", "SHIPPED", "DELIVERED"] },
+      createdAt: { $gte: dataLimite }
+    }
+  },
+  { $unwind: "$items" },
+  {
+    $group: {
+      _id: "$items.category",
+      faturamentoTotal: {
+        $sum: { $multiply: ["$items.quantity", "$items.unitPrice"] }
+      },
+      quantidadeItensVendidos: { $sum: "$items.quantity" }
+    }
+  },
+  { $sort: { faturamentoTotal: -1 } }
+]);
+```
 
-Antes (COLLSCAN)
+### 2.2. Ranking de Clientes VIP em "São Paulo" (Paginado com `$facet`)
+Cruza `orders` com `users` (`$lookup`), filtra residentes de `"São Paulo"` (`$match`), agrega total gasto e quantidade de pedidos (`$group`), ordena pelo maior gasto (`$sort`) e utiliza `$facet` para retornar o Top 10 e a contagem total de clientes elegíveis na mesma execução:
 
-Depois (IXSCAN + FETCH)
+```javascript
+db.orders.aggregate([
+  {
+    $lookup: {
+      from: "users",
+      localField: "userId",
+      foreignField: "_id",
+      as: "usuario"
+    }
+  },
+  { $unwind: "$usuario" },
+  { $match: { "usuario.city": "São Paulo" } },
+  {
+    $group: {
+      _id: "$usuario._id",
+      nome: { $first: "$usuario.name" },
+      email: { $first: "$usuario.email" },
+      totalGasto: { $sum: "$totalAmount" },
+      quantidadePedidos: { $sum: 1 }
+    }
+  },
+  { $sort: { totalGasto: -1 } },
+  {
+    $facet: {
+      rankingTop10: [{ $limit: 10 }],
+      totalClientesElegiveis: [{ $count: "total" }]
+    }
+  }
+]);
+```
 
-Melhoria
+---
 
-Tempo (executionTimeMillis)
+## ⚡ 3. Diagnóstico e Otimização de Performance (Regra ESR)
 
-297 ms
+### Consulta Avaliada
+```javascript
+db.orders.find({
+  shippingCity: "São Paulo",
+  status: "DELIVERED",
+  createdAt: { $gte: new Date(Date.now() - 30 * 86400000) }
+}).sort({ createdAt: -1 }).explain("executionStats");
+```
 
-53 ms
+### Índice Composto Criado (Regra ESR: *Equality*, *Sort*, *Range*)
+* **Equality:** `shippingCity` e `status`
+* **Sort:** `createdAt: -1`
+* **Range:** `createdAt: { $gte: ... }`
 
-~82% mais rápido
+```javascript
+db.orders.createIndex({
+  shippingCity: 1,
+  status: 1,
+  createdAt: -1
+});
+```
 
-Documentos Examinados
+### Comparativo de Execução (`.explain("executionStats")`)
 
-100.000
+| Métrica | Antes do Índice | Depois do Índice (`ESR`) | Ganho / Impacto |
+| :--- | :--- | :--- | :--- |
+| **Estágio Principal (`stage`)** | `SORT` + `COLLSCAN` | `FETCH` + `IXSCAN` | Eliminou varredura completa e ordenação em memória |
+| **Tempo (`executionTimeMillis`)** | `297 ms` | `53 ms` | Redução de `244 ms` (~82% mais rápido) |
+| **Chaves Examinadas (`totalKeysExamined`)** | `0` | `462` | Busca indexada direta (`shippingCity_1_status_1_createdAt_-1`) |
+| **Documentos Examinados (`totalDocsExamined`)** | `100.000` | `462` | Redução de `99.538` documentos lidos (-99,54% I/O) |
+| **Documentos Retornados (`nReturned`)** | `462` | `462` | Resultado idêntico com mínima leitura em disco |
 
-462
+---
 
--99,54% leituras
+## 🔒 4. Consistência e Transações ACID (`checkout.js`)
 
-Chaves Examinadas
+O fluxo transacional de compra (`criarPedidoTransacional`) utiliza sessões e transações multi-documento (`client.startSession()` + `session.withTransaction(...)`) no Replica Set `rs0`:
 
-0
-
-462
-
-Busca indexada direta
-
-🔒 Consistência e Transações ACID (checkout.js)
-
-O script checkout.js executa o fluxo atômico de compra (criarPedidoTransacional) garantindo que estoque, saldo em carteira e registro de pedido sejam atualizados em conjunto ou revertidos via abortTransaction:
-
+```powershell
 node checkout.js
+```
 
+### Etapas Atômicas da Transação
+1. **Validação de Estoque:** Verifica em `products` se o item existe e possui `stock >= quantity`.
+2. **Validação de Saldo:** Calcula `totalAmount = product.price * quantity` e verifica em `users` se `walletBalance >= totalAmount`.
+3. **Débito de Estoque (`$inc`):** Decrementa `stock` em `-quantity` com filtro condicional (`stock: { $gte: quantity }`) dentro da `session`.
+4. **Débito de Carteira (`$inc`):** Decrementa `walletBalance` em `-totalAmount` com filtro condicional (`walletBalance: { $gte: totalAmount }`) dentro da `session`.
+5. **Criação do Pedido:** Insere o documento na coleção `orders` com `status: "PAID"` dentro da `session`.
+6. **Garantia de Rollback (`abortTransaction`):** Caso qualquer validação falhe ou ocorra erro de concorrência, a transação é abortada automaticamente, revertendo qualquer alteração parcial.
 
-Valida disponibilidade de estoque (stock >= quantity) em products.
+---
 
-Valida saldo suficiente (walletBalance >= price * quantity) em users.
+## 🧪 Exemplos de Endpoints CRUD da API
 
-Debita o estoque ($inc: { stock: -quantity }) e o saldo ($inc: { walletBalance: -totalAmount }).
-
-Registra o novo pedido na coleção orders com status: "PAID".
-
-Os detalhes completos de modelagem, pipelines, planos de execução (.explain("executionStats")) e transações ACID estão documentados em SOLUCAO.md.
-
-🧪 Exemplos de Endpoints CRUD
-
-Criar Usuário (POST /usuarios)
-
+### Criar Usuário (`POST /usuarios`)
+```json
 {
   "nome": "João Silva",
   "tipo": "vendedor"
 }
+```
 
-
-Criar Produto (POST /produtos)
-
+### Criar Produto (`POST /produtos`)
+```json
 {
   "vendedorId": "ID_DO_VENDEDOR",
   "nome": "Teclado Mecânico",
   "preco": 350.00,
   "estoque": 20
 }
+```
 
+### Listar Produtos (`GET /produtos`)
+Retorna a lista de produtos com os dados do vendedor populados via `.populate()`.
 
-Listar Produtos (GET /produtos)
-
-Criar Pedido (POST /pedidos)
-
+### Criar Pedido (`POST /pedidos`)
+```json
 {
   "compradorId": "ID_DO_COMPRADOR",
   "produtoId": "ID_DO_PRODUTO",
   "quantidade": 2
 }
+```
